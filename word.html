@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>البحث المباشر وتعديل ملف Word</title>
+    <script src="mammoth.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="container">
+    <h2 id="mainTitle">البحث المباشر داخل مستند Word (.docx)</h2>
+
+    <div class="section">
+        <label for="fileInput" class="custom-file-upload" id="fileLabel">
+            📁 اختر ملف Word للبحث فيه...
+        </label>
+        <input type="file" id="fileInput" accept=".docx">
+    </div>
+
+    <div class="section">
+        <label for="searchInput"><strong>ابحث عن كلمة:</strong></label>
+        <input type="text" id="searchInput" placeholder="اكتب الكلمة للبحث عنها..." disabled>
+        
+        <div class="buttons-group">
+            <button id="toggleFileBtn" disabled>📄 إظهار الملف كاملاً</button>
+            <button id="editFileBtn" disabled>✏️ تعديل الملف</button>
+        </div>
+        
+        <div class="save-download-group" id="saveDownloadGroup" style="display: none;">
+            <button id="saveChangesBtn">💾 حفظ التعديلات</button>
+            <button id="downloadFileBtn">📥 تنزيل</button>
+        </div>
+
+        <button id="nextMatchBtn" disabled>الانتقال للكلمة التالية 🔍</button>
+
+        <div id="resultsCount"></div>
+    </div>
+
+    <div class="output-wrapper">
+        <label style="display: block; margin-bottom: 4px; flex-shrink: 0;"><strong>محتوى الملف / النتائج:</strong></label>
+        <div class="output-container">
+            <div id="output">قم برفع الملف ثم ابحث أو اضغط على الزر لعرض المحتوى...</div>
+        </div>
+    </div>
+</div>
+
+<footer class="page-footer">
+    <a href="index.html" class="footer-link">🏠 الصفحة الرئيسية</a>
+    <a href="excel.html" class="footer-link">📊 جداول Excel</a>
+    <a href="pdf.html" class="footer-link">📑 ملفات PDF</a>
+</footer>
+
+<script>
+    let extractedElements = [];
+    let fullHtmlContent = ""; 
+    let isFileVisible = false;
+    let isEditing = false;
+    let currentMatchIndex = -1;
+    let originalFileName = "document.docx";
+
+    const fileInput = document.getElementById('fileInput');
+    const fileLabel = document.getElementById('fileLabel');
+    const searchInput = document.getElementById('searchInput');
+    const toggleFileBtn = document.getElementById('toggleFileBtn');
+    const editFileBtn = document.getElementById('editFileBtn');
+    const saveDownloadGroup = document.getElementById('saveDownloadGroup');
+    const saveChangesBtn = document.getElementById('saveChangesBtn');
+    const downloadFileBtn = document.getElementById('downloadFileBtn');
+    const nextMatchBtn = document.getElementById('nextMatchBtn');
+    const outputDiv = document.getElementById('output');
+    const resultsCount = document.getElementById('resultsCount');
+    const mainTitle = document.getElementById('mainTitle');
+
+    fileInput.addEventListener('change', function(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        originalFileName = file.name;
+        fileLabel.textContent = `📄 ${file.name}`;
+        mainTitle.textContent = `البحث المباشر داخل ${file.name}`;
+
+        const reader = new FileReader();
+        reader.onload = function(loadEvent) {
+            const arrayBuffer = loadEvent.target.result;
+
+            mammoth.convertToHtml({ arrayBuffer: arrayBuffer })
+                .then(function(result) {
+                    fullHtmlContent = result.value; 
+                    outputDiv.innerHTML = fullHtmlContent + '<div style="height: 50px; width: 100%;"></div>';
+
+                    extractElementsFromHtml(fullHtmlContent);
+
+                    searchInput.disabled = false;
+                    toggleFileBtn.disabled = false;
+                    editFileBtn.disabled = false;
+                    
+                    isFileVisible = true;
+                    toggleFileBtn.textContent = "📄 إخفاء الملف";
+                    toggleFileBtn.classList.add('active');
+                    outputDiv.classList.add('full-file-view');
+                    
+                    resultsCount.innerHTML = "تم عرض الملف كاملاً.";
+                    resetMatchesState();
+                })
+                .catch(function(err) {
+                    outputDiv.innerHTML = "<span style='color: red;'>حدث خطأ أثناء قراءة الملف!</span>";
+                    console.error(err);
+                });
+        };
+        reader.readAsArrayBuffer(file);
+    });
+
+    function extractElementsFromHtml(html) {
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = html;
+        const elements = tempDiv.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li');
+        extractedElements = [];
+        elements.forEach(el => {
+            const text = el.textContent.trim();
+            if (text.length > 0) {
+                extractedElements.push(el.outerHTML);
+            }
+        });
+        if (extractedElements.length === 0) {
+            extractedElements = html.split('</p>').map(p => p.trim() + '</p>').filter(p => p.length > 7);
+        }
+    }
+
+    toggleFileBtn.addEventListener('click', function() {
+        if (!fullHtmlContent) return;
+        if (isEditing) exitEditMode();
+
+        if (isFileVisible) {
+            isFileVisible = false;
+            toggleFileBtn.textContent = "📄 إظهار الملف كاملاً";
+            toggleFileBtn.classList.remove('active');
+            outputDiv.classList.remove('full-file-view');
+            performSearch();
+        } else {
+            isFileVisible = true;
+            toggleFileBtn.textContent = "📄 إخفاء الملف";
+            toggleFileBtn.classList.add('active');
+            outputDiv.classList.add('full-file-view');
+            performSearch();
+        }
+    });
+
+    editFileBtn.addEventListener('click', function() {
+        if (!fullHtmlContent) return;
+
+        if (!isEditing) {
+            isEditing = true;
+            editFileBtn.textContent = "❌ إلغاء التعديل";
+            editFileBtn.classList.add('active');
+            
+            saveChangesBtn.style.display = "block";
+            saveDownloadGroup.style.display = "flex";
+            
+            isFileVisible = true;
+            toggleFileBtn.textContent = "📄 إخفاء الملف";
+            toggleFileBtn.classList.add('active');
+            outputDiv.classList.add('full-file-view');
+            outputDiv.innerHTML = fullHtmlContent;
+            outputDiv.setAttribute('contenteditable', 'true');
+            outputDiv.focus();
+            
+            searchInput.disabled = false;
+            toggleFileBtn.disabled = false;
+            resultsCount.innerHTML = "أنت الآن في وضع التعديل المباشر مع إمكانية البحث الفوري.";
+        } else {
+            exitEditMode();
+            performSearch();
+        }
+    });
+
+    function exitEditMode() {
+        isEditing = false;
+        editFileBtn.textContent = "✏️ تعديل الملف";
+        editFileBtn.classList.remove('active');
+        
+        saveChangesBtn.style.display = "block";
+        saveDownloadGroup.style.display = "none";
+        
+        outputDiv.removeAttribute('contenteditable');
+        searchInput.disabled = false;
+        toggleFileBtn.disabled = false;
+    }
+
+    saveChangesBtn.addEventListener('click', function() {
+        const updatedHtml = outputDiv.innerHTML;
+        const cleanHtml = updatedHtml.replace(/<mark[^>]*>/gi, '').replace(/<\/mark>/gi, '');
+        
+        fullHtmlContent = cleanHtml;
+        extractElementsFromHtml(cleanHtml);
+        
+        isEditing = false;
+        editFileBtn.textContent = "✏️ تعديل الملف";
+        editFileBtn.classList.remove('active');
+        
+        // إخفاء زر الحفظ فقط وإبقاء مجموعة الأزرار ظاهرة (ليظل زر التنزيل متاحاً)
+        saveChangesBtn.style.display = "none";
+        saveDownloadGroup.style.display = "flex";
+        
+        outputDiv.removeAttribute('contenteditable');
+        searchInput.disabled = false;
+        toggleFileBtn.disabled = false;
+        
+        resultsCount.innerHTML = "✅ تم حفظ التعديلات داخل التطبيق بنجاح! يمكنك البحث فيها الآن أو تنزيل الملف.";
+    });
+
+    downloadFileBtn.addEventListener('click', function() {
+        const currentContent = isEditing ? outputDiv.innerHTML : fullHtmlContent;
+        const cleanHtml = currentContent.replace(/<mark[^>]*>/gi, '').replace(/<\/mark>/gi, '');
+
+        const header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' "+
+            "xmlns:w='urn:schemas-microsoft-com:office:word' "+
+            "xmlns='http://www.w3.org/TR/REC-html40'>"+
+            "<head><meta charset='utf-8'><title>Document</title></head><body dir='rtl' style='font-family: Segoe UI, sans-serif;'>";
+        const footer = "</body></html>";
+        
+        const sourceHTML = header + cleanHtml + footer;
+
+        const blob = new Blob(['\ufeff' + sourceHTML], {
+            type: 'application/msword'
+        });
+
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        
+        let nameParts = originalFileName.split('.');
+        if (nameParts.length > 1) nameParts.pop();
+        a.download = `معدل_${nameParts.join('.')}.doc`;
+        
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        resultsCount.innerHTML = "📥 تم بدء تنزيل الملف المعدل!";
+    });
+
+    searchInput.addEventListener('input', function() {
+        if (isEditing) {
+            fullHtmlContent = outputDiv.innerHTML;
+        }
+        resetMatchesState();
+        performSearch();
+    });
+
+    function resetMatchesState() {
+        currentMatchIndex = -1;
+        nextMatchBtn.disabled = true;
+    }
+
+    nextMatchBtn.addEventListener('click', function() {
+        const marks = outputDiv.querySelectorAll('mark');
+        if (marks.length === 0) return;
+
+        if (currentMatchIndex >= 0 && currentMatchIndex < marks.length) {
+            marks[currentMatchIndex].classList.remove('current-match');
+        }
+
+        currentMatchIndex = (currentMatchIndex + 1) % marks.length;
+
+        const activeMark = marks[currentMatchIndex];
+        activeMark.classList.add('current-match');
+
+        activeMark.scrollIntoView({
+            behavior: 'smooth',
+            block: 'center'
+        });
+    });
+
+    function performSearch() {
+        const keyword = searchInput.value.trim();
+        const contentSource = isEditing ? outputDiv.innerHTML.replace(/<mark[^>]*>/gi, '').replace(/<\/mark>/gi, '') : fullHtmlContent;
+
+        if (isFileVisible) {
+            outputDiv.classList.add('full-file-view');
+            
+            if (keyword === "") {
+                outputDiv.innerHTML = contentSource + '<div style="height: 50px; width: 100%;"></div>';
+                resultsCount.innerHTML = isEditing ? "وضع التعديل مفعل." : "تم عرض الملف كاملاً.";
+                resetMatchesState();
+                return;
+            }
+
+            const escapedKeyword = keyword.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+            const regex = new RegExp(`(${escapedKeyword})`, 'gi');
+
+            const highlightedContent = contentSource.replace(regex, '<mark>$1</mark>');
+            outputDiv.innerHTML = highlightedContent + '<div style="height: 50px; width: 100%;"></div>';
+            
+            const marks = outputDiv.querySelectorAll('mark');
+            const count = marks.length;
+            resultsCount.innerHTML = `عدد مرات ظهور الكلمة داخل الملف: ${count}`;
+
+            if (count > 0) {
+                nextMatchBtn.disabled = false;
+                currentMatchIndex = -1;
+            } else {
+                nextMatchBtn.disabled = true;
+            }
+            return;
+        }
+
+        outputDiv.classList.remove('full-file-view');
+        resetMatchesState();
+
+        if (keyword === "") {
+            outputDiv.innerHTML = "تم إخفاء محتوى الملف. اكتب كلمة في خانة البحث لعرض النتائج المطابقة فقط.";
+            resultsCount.innerHTML = "";
+            return;
+        }
+
+        extractElementsFromHtml(contentSource);
+        const escapedKeyword = keyword.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        const regex = new RegExp(`(${escapedKeyword})`, 'gi');
+
+        const matchingElements = extractedElements.filter(elHtml => {
+            const tmp = document.createElement('div');
+            tmp.innerHTML = elHtml;
+            return regex.test(tmp.textContent || "");
+        });
+
+        if (matchingElements.length === 0) {
+            outputDiv.innerHTML = "<div style='color: #666;'>لم يتم العثور على أي نتائج تطابق البحث.</div>";
+            resultsCount.innerHTML = "عدد النتائج: 0";
+            nextMatchBtn.disabled = true;
+            return;
+        }
+
+        resultsCount.innerHTML = `عدد النتائج المعروضة: ${matchingElements.length}`;
+
+        outputDiv.innerHTML = matchingElements.map(elHtml => {
+            const tmp = document.createElement('div');
+            tmp.innerHTML = elHtml;
+            const highlightedHtml = tmp.innerHTML.replace(regex, '<mark>$1</mark>');
+            return `<div class="result-item">${highlightedHtml}</div>`;
+        }).join('') + '<div style="height: 50px; width: 100%;"></div>';
+
+        const marks = outputDiv.querySelectorAll('mark');
+        if (marks.length > 0) {
+            nextMatchBtn.disabled = false;
+            currentMatchIndex = -1;
+        }
+    }
+</script>
+
+</body>
+</html>
